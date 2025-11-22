@@ -1,12 +1,12 @@
 name: RDP Setup and Software Installation
 
 on:
-  workflow_dispatch:  # Trigger manually
+  workflow_dispatch:
 
 jobs:
   setup-rdp:
     runs-on: windows-latest
-    timeout-minutes: 3600  # Set the maximum job time (6 hours)
+    timeout-minutes: 3600
 
     steps:
 
@@ -15,39 +15,31 @@ jobs:
 
       - name: Configure Core RDP Settings
         run: |
-          # Enable Remote Desktop and disable Network Level Authentication
           Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' `
                              -Name "fDenyTSConnections" -Value 0 -Force
           Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' `
                              -Name "UserAuthentication" -Value 0 -Force
           Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' `
                              -Name "SecurityLayer" -Value 0 -Force
-          # Open firewall for RDP on port 3389
           netsh advfirewall firewall add rule name="RDP-Tailscale" `
             dir=in action=allow protocol=TCP localport=3389
-          # Restart the Remote Desktop service to ensure changes take effect
           Restart-Service -Name TermService -Force
 
       - name: Create RDP User with Fixed Password
         run: |
-          # Use a fixed RDP password as requested
           $password = 'Zain.rty123'
           $securePass = ConvertTo-SecureString $password -AsPlainText -Force
-          # Create the RDP user (if it already exists, update the password)
           if (Get-LocalUser -Name "Administrator" -ErrorAction SilentlyContinue) {
-              # Set the password for existing user
               Set-LocalUser -Name "Administrator" -Password $securePass
           } else {
               New-LocalUser -Name "Administrator" -Password $securePass -AccountNeverExpires
           }
-          # Ensure group memberships
           if (-not (Get-LocalGroupMember -Group "Administrators" -Member "Administrator" -ErrorAction SilentlyContinue)) {
               Add-LocalGroupMember -Group "Administrators" -Member "Administrator"
           }
           if (-not (Get-LocalGroupMember -Group "Remote Desktop Users" -Member "Administrator" -ErrorAction SilentlyContinue)) {
               Add-LocalGroupMember -Group "Remote Desktop Users" -Member "Administrator"
           }
-          # Output the credentials to GitHub environment for later use
           echo "RDP_CREDS=User: Administrator | Password: $password" >> $env:GITHUB_ENV
           if (-not (Get-LocalUser -Name "Administrator")) {
               Write-Error "User creation or update failed"
@@ -56,12 +48,10 @@ jobs:
 
       - name: Keep Administrator Session Active
         run: |
-          # Prevent session lock and idle disconnect
           Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' -Name "fResetBroken" -Value 0
           Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' -Name "IdleTimeout" -Value 0
           Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' -Name "MaxIdleTime" -Value 0
           Set-ItemProperty -Path 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System' -Name "InactivityTimeoutSecs" -Value 0
-          # Prevent monitor from sleeping / system from going into standby
           powercfg.exe /change monitor-timeout-ac 0
           powercfg.exe /change standby-timeout-ac 0
 
@@ -76,12 +66,8 @@ jobs:
 
       - name: Establish Tailscale Connection
         run: |
-          # Get the Tailscale Auth Key from GitHub Secrets
           $authKey = "${{ secrets.TAILSCALE_AUTH_KEY }}"
-          
-          # Log in to Tailscale using the provided auth key and set a unique hostname
           & "$env:ProgramFiles\Tailscale\tailscale.exe" up --authkey=$authKey --hostname=gh-runner-$env:GITHUB_RUN_ID
-          # Wait for Tailscale to assign an IP
           $tsIP = $null
           $retries = 0
           while (-not $tsIP -and $retries -lt 10) {
@@ -99,7 +85,6 @@ jobs:
         run: |
           Write-Host "Tailscale IP: $env:TAILSCALE_IP"
           
-          # Test connectivity using Test-NetConnection against the Tailscale IP on port 3389
           $testResult = Test-NetConnection -ComputerName $env:TAILSCALE_IP -Port 3389
           if (-not $testResult.TcpTestSucceeded) {
               Write-Error "TCP connection to RDP port 3389 failed"
@@ -107,6 +92,21 @@ jobs:
           }
           Write-Host "TCP connectivity successful!"
 
+      - name: Download Google Drive Files
+        run: |
+          $dest = "C:\Users\Administrator\Downloads"
+
+          $files = @{
+            "Nadeem.ova" = "1QWi-H7_IZgrohf4xCRvmOTvFF2SqAUtw"
+            "VirtualBox-7.2.4-170995-Win.exe" = "1TWl--uMIzyEfyvh44hfLYx0n4D3B82XF"
+          }
+
+          foreach ($name in $files.Keys) {
+            $id = $files[$name]
+            $url = "https://drive.google.com/uc?export=download&id=$id"
+            $output = Join-Path $dest $name
+            Invoke-WebRequest -Uri $url -OutFile $output -UseBasicParsing
+          }
 
       - name: Maintain RDP Connection
         run: |
@@ -115,7 +115,6 @@ jobs:
           Write-Host "Username: Administrator"
           Write-Host "Password: $env:RDP_CREDS"
           Write-Host "==================`n"
-          # Keep runner active indefinitely (or until manually canceled)
           while ($true) {
               Write-Host "[$(Get-Date)] RDP Active - Use Ctrl+C to terminate"
               Start-Sleep -Seconds 300
