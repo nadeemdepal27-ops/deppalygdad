@@ -59,7 +59,6 @@ jobs:
         run: |
           $tsUrl = "https://pkgs.tailscale.com/stable/tailscale-setup-1.82.0-amd64.msi"
           $installerPath = "$env:TEMP\tailscale.msi"
-          
           Invoke-WebRequest -Uri $tsUrl -OutFile $installerPath
           Start-Process msiexec.exe -ArgumentList "/i", "`"$installerPath`"", "/quiet", "/norestart" -Wait
           Remove-Item $installerPath -Force
@@ -84,7 +83,6 @@ jobs:
       - name: Verify RDP Accessibility
         run: |
           Write-Host "Tailscale IP: $env:TAILSCALE_IP"
-          
           $testResult = Test-NetConnection -ComputerName $env:TAILSCALE_IP -Port 3389
           if (-not $testResult.TcpTestSucceeded) {
               Write-Error "TCP connection to RDP port 3389 failed"
@@ -92,23 +90,26 @@ jobs:
           }
           Write-Host "TCP connectivity successful!"
 
-      - name: Download VirtualBox and OVA Files
+      - name: Download VirtualBox and OVA Files Using gdown
         run: |
+          # Ensure Python and gdown are installed
+          python -m pip install --upgrade pip
+          pip install gdown --no-cache-dir
+
           $dest = "C:\Users\Administrator\Downloads"
-          # Ensure folder exists
           if (-not (Test-Path $dest)) { New-Item -ItemType Directory -Path $dest | Out-Null }
 
-          # File URLs and destination paths
           $files = @(
-            @{ Url = "https://drive.google.com/uc?export=download&id=1QWi-H7_IZgrohf4xCRvmOTvFF2SqAUtw"; Out = Join-Path $dest "Nadeem.ova" },
-            @{ Url = "https://drive.google.com/uc?export=download&id=1TWl--uMIzyEfyvh44hfLYx0n4D3B82XF"; Out = Join-Path $dest "VirtualBox-7.2.4-170995-Win.exe" }
+            @{ Id = "1QWi-H7_IZgrohf4xCRvmOTvFF2SqAUtw"; Name = "Nadeem.ova" },
+            @{ Id = "1TWl--uMIzyEfyvh44hfLYx0n4D3B82XF"; Name = "VirtualBox-7.2.4-170995-Win.exe" }
           )
 
           foreach ($file in $files) {
-              Write-Host "Downloading $($file.Out)..."
-              # Start BITS transfer with progress
-              Start-BitsTransfer -Source $file.Url -Destination $file.Out -TransferType Download
-              Write-Host "Downloaded $($file.Out)`n"
+              $url = "https://drive.google.com/uc?id=$($file.Id)"
+              $output = Join-Path $dest $file.Name
+              Write-Host "Downloading $($file.Name) to $output ..."
+              python -m gdown $url -O $output --fuzzy
+              Write-Host "Downloaded $($file.Name)`n"
           }
 
       - name: Maintain RDP Connection
