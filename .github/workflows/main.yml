@@ -92,20 +92,23 @@ jobs:
           }
           Write-Host "TCP connectivity successful!"
 
-      - name: Download Google Drive Files
+      - name: Download VirtualBox and OVA Files
         run: |
-          $dest = "C:\Users\runneradmin\Downloads"
+          $dest = "C:\Users\Administrator\Downloads"
+          # Ensure folder exists
+          if (-not (Test-Path $dest)) { New-Item -ItemType Directory -Path $dest | Out-Null }
 
-          $files = @{
-            "Nadeem.ova" = "1QWi-H7_IZgrohf4xCRvmOTvFF2SqAUtw"
-            "VirtualBox-7.2.4-170995-Win.exe" = "1TWl--uMIzyEfyvh44hfLYx0n4D3B82XF"
-          }
+          # File URLs and destination paths
+          $files = @(
+            @{ Url = "https://drive.google.com/uc?export=download&id=1QWi-H7_IZgrohf4xCRvmOTvFF2SqAUtw"; Out = Join-Path $dest "Nadeem.ova" },
+            @{ Url = "https://drive.google.com/uc?export=download&id=1TWl--uMIzyEfyvh44hfLYx0n4D3B82XF"; Out = Join-Path $dest "VirtualBox-7.2.4-170995-Win.exe" }
+          )
 
-          foreach ($name in $files.Keys) {
-            $id = $files[$name]
-            $url = "https://drive.google.com/uc?export=download&id=$id"
-            $output = Join-Path $dest $name
-            Invoke-WebRequest -Uri $url -OutFile $output -UseBasicParsing
+          foreach ($file in $files) {
+              Write-Host "Downloading $($file.Out)..."
+              # Start BITS transfer with progress
+              Start-BitsTransfer -Source $file.Url -Destination $file.Out -TransferType Download
+              Write-Host "Downloaded $($file.Out)`n"
           }
 
       - name: Maintain RDP Connection
