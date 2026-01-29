@@ -1,10 +1,10 @@
-name: RDP Setup and VirtualBox Installer + OVA Download
+name: VirtualBox VM Runner
 
 on:
   workflow_dispatch:
 
 jobs:
-  setup-rdp-and-vm:
+  run-vm:
     runs-on: windows-latest
     timeout-minutes: 3600
 
@@ -12,72 +12,7 @@ jobs:
       - name: Checkout Repository
         uses: actions/checkout@v2
 
-      - name: Configure Core RDP Settings
-        run: |
-          Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' -Name "fDenyTSConnections" -Value 0 -Force
-          Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' -Name "UserAuthentication" -Value 0 -Force
-          Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' -Name "SecurityLayer" -Value 0 -Force
-          netsh advfirewall firewall add rule name="RDP-Tailscale" dir=in action=allow protocol=TCP localport=3389
-          Restart-Service -Name TermService -Force
-
-      - name: Create RDP User
-        run: |
-          $password = 'Zain.rty123'
-          $securePass = ConvertTo-SecureString $password -AsPlainText -Force
-          if (Get-LocalUser -Name "Administrator" -ErrorAction SilentlyContinue) {
-              Set-LocalUser -Name "Administrator" -Password $securePass
-          } else {
-              New-LocalUser -Name "Administrator" -Password $securePass -AccountNeverExpires
-          }
-          Add-LocalGroupMember -Group "Administrators" -Member "Administrator" -ErrorAction SilentlyContinue
-          Add-LocalGroupMember -Group "Remote Desktop Users" -Member "Administrator" -ErrorAction SilentlyContinue
-          echo "RDP_CREDS=$password" >> $env:GITHUB_ENV
-
-      - name: Keep Administrator Session Active
-        run: |
-          Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' -Name "fResetBroken" -Value 0
-          Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' -Name "IdleTimeout" -Value 0
-          Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' -Name "MaxIdleTime" -Value 0
-          Set-ItemProperty -Path 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System' -Name "InactivityTimeoutSecs" -Value 0
-          powercfg.exe /change monitor-timeout-ac 0
-          powercfg.exe /change standby-timeout-ac 0
-
-      - name: Install Tailscale
-        run: |
-          $tsUrl = "https://pkgs.tailscale.com/stable/tailscale-setup-1.82.0-amd64.msi"
-          $installerPath = "$env:TEMP\tailscale.msi"
-          Invoke-WebRequest -Uri $tsUrl -OutFile $installerPath
-          Start-Process msiexec.exe -ArgumentList "/i `"$installerPath`" /quiet /norestart" -Wait
-          Remove-Item $installerPath -Force
-
-      - name: Establish Tailscale Connection
-        run: |
-          $authKey = "${{ secrets.TAILSCALE_AUTH_KEY }}"
-          & "$env:ProgramFiles\Tailscale\tailscale.exe" up --authkey=$authKey --hostname=gh-runner-$env:GITHUB_RUN_ID
-          $tsIP = $null
-          $retries = 0
-          while (-not $tsIP -and $retries -lt 10) {
-              $tsIP = & "$env:ProgramFiles\Tailscale\tailscale.exe" ip -4
-              Start-Sleep -Seconds 5
-              $retries++
-          }
-          if (-not $tsIP) {
-              Write-Error "Tailscale IP not assigned. Exiting."
-              exit 1
-          }
-          echo "TAILSCALE_IP=$tsIP" >> $env:GITHUB_ENV
-
-      - name: Verify RDP Accessibility
-        run: |
-          Write-Host "Tailscale IP: $env:TAILSCALE_IP"
-          $testResult = Test-NetConnection -ComputerName $env:TAILSCALE_IP -Port 3389
-          if (-not $testResult.TcpTestSucceeded) {
-              Write-Error "TCP connection to RDP port 3389 failed"
-              exit 1
-          }
-          Write-Host "TCP connectivity successful!"
-
-      - name: Download VirtualBox and OVA Directly (No Keys)
+      - name: Download VirtualBox and OVA
         run: |
           $dest = "C:\Users\Administrator\Desktop\Public"
           if (-not (Test-Path $dest)) { New-Item -ItemType Directory -Path $dest | Out-Null }
@@ -98,15 +33,74 @@ jobs:
         run: |
           $vbInstaller = "C:\Users\Administrator\Desktop\Public\VirtualBox-7.2.4-170995-Win.exe"
           Start-Process -FilePath $vbInstaller -ArgumentList "--silent --msiparams ALLUSERS=2" -Wait
+          
+          # Wait for VirtualBox to fully install
+          Start-Sleep -Seconds 10
+          
+          # Verify installation
+          $vboxManage = "C:\Program Files\Oracle\VirtualBox\VBoxManage.exe"
+          if (Test-Path $vboxManage) {
+              Write-Host "✅ VirtualBox installed successfully!"
+              & $vboxManage --version
+          } else {
+              Write-Error "❌ VirtualBox installation failed!"
+              exit 1
+          }
 
-      - name: Maintain RDP Connection
+      - name: Import and Start OVA VM
         run: |
-          Write-Host "`n=== RDP ACCESS ==="
-          Write-Host "Address: $env:TAILSCALE_IP"
-          Write-Host "Username: Administrator"
-          Write-Host "Password: $env:RDP_CREDS"
-          Write-Host "==================`n"
+          $vboxManage = "C:\Program Files\Oracle\VirtualBox\VBoxManage.exe"
+          $ovaPath = "C:\Users\Administrator\Desktop\Public\Nadeem.ova"
+          $vmName = "Nadeem"
+          
+          Write-Host "📦 Importing OVA: $ovaPath"
+          Write-Host "This may take a few minutes..."
+          
+          # Import the OVA
+          & $vboxManage import $ovaPath --vsys 0 --vmname $vmName
+          
+          if ($LASTEXITCODE -ne 0) {
+              Write-Error "❌ Failed to import OVA!"
+              exit 1
+          }
+          
+          Write-Host "✅ OVA imported successfully!"
+          
+          # List VMs to verify
+          Write-Host "`n📋 Available VMs:"
+          & $vboxManage list vms
+          
+          # Start the VM in headless mode (no GUI window needed)
+          Write-Host "`n🚀 Starting VM '$vmName' in headless mode..."
+          & $vboxManage startvm $vmName --type headless
+          
+          if ($LASTEXITCODE -ne 0) {
+              Write-Error "❌ Failed to start VM!"
+              exit 1
+          }
+          
+          Write-Host "✅ VM '$vmName' started successfully!"
+          
+          # Wait for VM to boot
+          Write-Host "⏳ Waiting 60 seconds for VM to boot..."
+          Start-Sleep -Seconds 60
+          
+          # Show VM info
+          Write-Host "`n📊 VM Status:"
+          & $vboxManage showvminfo $vmName --machinereadable | Select-String -Pattern "VMState|memory|cpus"
+
+      - name: Keep VM Running
+        run: |
+          Write-Host "`n=========================================="
+          Write-Host "    ✅ VM 'Nadeem' is running!"
+          Write-Host "=========================================="
+          Write-Host "The scraper inside the VM should be running automatically."
+          Write-Host "Check GitHub repo for logs and scraped data."
+          Write-Host "==========================================`n"
+          
           while ($true) {
-              Write-Host "[$(Get-Date)] RDP Active - Use Ctrl+C to terminate"
+              $vmStatus = & "C:\Program Files\Oracle\VirtualBox\VBoxManage.exe" showvminfo "Nadeem" --machinereadable 2>$null | Select-String "VMState="
+              Write-Host "[$(Get-Date)] VM Status: $vmStatus"
               Start-Sleep -Seconds 300
           }
+ 
