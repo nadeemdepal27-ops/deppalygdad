@@ -103,4 +103,3 @@ jobs:
               Write-Host "[$(Get-Date)] VM Status: $vmStatus"
               Start-Sleep -Seconds 300
           }
- 
